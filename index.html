@@ -63,6 +63,28 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;bac
 .toggle-thumb{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.4);transition:transform .25s cubic-bezier(.34,1.56,.64,1),background .25s;}
 .toggle-switch input:checked ~ .toggle-thumb{transform:translateX(20px);background:var(--acc);}
 
+/* Mode tabs */
+.mode-tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:24px;}
+.mode-tab{padding:14px 20px;border-radius:var(--r-xl);border:1.5px solid var(--border-strong);background:rgba(0,0,0,.2);font-family:'Nunito',sans-serif;color:var(--ink-muted);cursor:pointer;transition:all .2s;text-align:center;}
+.mode-tab:hover{border-color:var(--ink-mid);color:var(--ink);}
+.mode-tab.on{background:rgba(127,168,255,.1);border-color:var(--acc);color:var(--acc);}
+.mode-tab .mt-icon{font-size:18px;display:block;margin-bottom:4px;}
+.mode-tab .mt-title{font-size:13px;font-weight:900;}
+.mode-tab .mt-sub{font-size:10px;font-weight:700;opacity:.7;margin-top:2px;}
+
+/* Level library */
+.lib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:10px;}
+.lib-card{background:rgba(0,0,0,.2);border:1.5px solid var(--border-strong);border-radius:var(--r-lg);padding:12px 14px;transition:border-color .15s,background .15s;}
+.lib-card:hover{border-color:var(--acc);background:rgba(127,168,255,.06);}
+.lib-card.hard{border-color:var(--exp-border);}
+.lib-card.hard:hover{border-color:var(--acc-purple);}
+.lib-id{font-size:19px;font-weight:900;color:var(--ink);display:flex;align-items:baseline;gap:7px;}
+.lib-pos{font-size:10px;font-weight:800;color:var(--ink-muted);}
+.lib-star{color:var(--acc-purple);font-size:13px;}
+.lib-meta{font-size:10px;color:var(--ink-muted);margin:5px 0 10px;font-family:'Source Code Pro',monospace;line-height:1.5;}
+.lib-acts{display:flex;gap:6px;}
+.lib-acts .act-btn{padding:5px 8px;font-size:11px;flex:1;justify-content:center;}
+
 /* Card */
 .card{background:var(--card);border:1.5px solid var(--border);border-radius:var(--r-xl);box-shadow:var(--shad);padding:26px 30px;margin-bottom:16px;backdrop-filter:blur(18px);transition:background .2s,border-color .2s;}
 .card:hover{background:var(--card-hover);}
@@ -278,6 +300,22 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
     </div>
   </div>
 
+  <!-- Mode Tabs -->
+  <div class="mode-tabs">
+    <button class="mode-tab on" data-mode="gen" onclick="switchMode('gen')">
+      <span class="mt-icon">🔗</span>
+      <div class="mt-title">AI Generator</div>
+      <div class="mt-sub">Generate fresh levels with Claude</div>
+    </button>
+    <button class="mode-tab" data-mode="lib" onclick="switchMode('lib')">
+      <span class="mt-icon">🕹️</span>
+      <div class="mt-title">Level Library</div>
+      <div class="mt-sub">Play &amp; export the 110 shipped levels</div>
+    </button>
+  </div>
+
+  <div id="view-gen">
+
   <!-- CARD 1: Configuration -->
   <div class="card">
     <div class="sec-head">Configuration</div>
@@ -465,8 +503,26 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
     </div>
   </div>
 
+  </div><!-- /view-gen -->
+
+  <!-- LEVEL LIBRARY -->
+  <div id="view-lib" style="display:none">
+    <div class="card">
+      <div class="sec-head">Level Library</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:16px;">
+        <p class="hint" style="margin:0;flex:1;min-width:220px;">The shipped levels of Word Tree: Associations, in play order. ▶ opens a level in the real game engine; ⬇ saves a standalone playable HTML of just that level.</p>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="cd-status" id="libCount" style="margin:0;"></span>
+          <button class="act-btn primary" onclick="downloadAllExisting()">⬇ Download All</button>
+        </div>
+      </div>
+      <div class="lib-grid" id="libGrid"></div>
+    </div>
+  </div><!-- /view-lib -->
+
 </div><!-- /page -->
 
+<script src="levels.js"></script>
 <script type="text/plain" id="gameSrc">/* Word Tree: Associations - prototype
    Single-file canvas build. LEVELS is injected above this script. */
 (function () {
@@ -1807,21 +1863,23 @@ const GAME_HEAD=`<!DOCTYPE html>
 <canvas id="cv"></canvas>
 `;
 
-function buildPlayableHTML(){
+function buildPlayableHTMLFrom(levels){
   const gameJs=document.getElementById('gameSrc').textContent;
-  const levels=batchResults.map(b=>b.level);
   return GAME_HEAD
     +'<script>var LEVELS='+JSON.stringify(levels)+';<\/script>\n'
     +'<script>'+gameJs+'<\/script>\n</body>\n</html>';
 }
+function buildPlayableHTML(){return buildPlayableHTMLFrom(batchResults.map(b=>b.level));}
 
-function openPlay(){
-  if(!batchResults.length)return;
-  const idx=batchIdx;
+function openPlayFrom(levels,idx){
   const iframe=document.getElementById('playFrame');
   iframe.onload=()=>{try{iframe.contentWindow.GAME.load(idx);}catch{}};
-  iframe.srcdoc=buildPlayableHTML();
+  iframe.srcdoc=buildPlayableHTMLFrom(levels);
   document.getElementById('playOverlay').classList.add('on');
+}
+function openPlay(){
+  if(!batchResults.length)return;
+  openPlayFrom(batchResults.map(b=>b.level),batchIdx);
 }
 function closePlay(){
   document.getElementById('playOverlay').classList.remove('on');
@@ -1832,14 +1890,55 @@ document.getElementById('playOverlay').addEventListener('click',e=>{
 });
 window.addEventListener('keydown',e=>{if(e.key==='Escape')closePlay();});
 
-function downloadPlayable(){
-  if(!batchResults.length)return;
-  const blob=new Blob([buildPlayableHTML()],{type:'text/html'});
+function downloadHTML(html,filename){
+  const blob=new Blob([html],{type:'text/html'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
-  a.download='WordTree_GeneratedLevels.html';
+  a.download=filename;
   a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+}
+function downloadPlayable(){
+  if(!batchResults.length)return;
+  downloadHTML(buildPlayableHTML(),'WordTree_GeneratedLevels.html');
+}
+
+/* ══════════════════ Level Library (shipped levels) ══════════════════ */
+function switchMode(m){
+  document.querySelectorAll('.mode-tab').forEach(b=>b.classList.toggle('on',b.dataset.mode===m));
+  document.getElementById('view-gen').style.display=m==='gen'?'':'none';
+  document.getElementById('view-lib').style.display=m==='lib'?'':'none';
+  if(m==='lib')renderLibrary();
+}
+let libRendered=false;
+function renderLibrary(){
+  if(libRendered)return;
+  const grid=document.getElementById('libGrid');
+  if(!window.EXISTING_LEVELS||!EXISTING_LEVELS.length){
+    grid.innerHTML='<p class="hint">Could not load levels.js — make sure it sits next to index.html.</p>';
+    return;
+  }
+  libRendered=true;
+  document.getElementById('libCount').textContent=EXISTING_LEVELS.length+' levels';
+  grid.innerHTML=EXISTING_LEVELS.map((l,i)=>{
+    const given=l.ns.filter(n=>n.g).length;
+    return `<div class="lib-card${l.h?' hard':''}">
+      <div class="lib-id">Lv ${l.id}${l.h?'<span class="lib-star">✦</span>':''}<span class="lib-pos">#${i+1}</span></div>
+      <div class="lib-meta">${l.ns.length} nodes · ${l.to.length} tray<br>${l.ml} moves · ${given} given</div>
+      <div class="lib-acts">
+        <button class="act-btn" onclick="playExisting(${i})">▶ Play</button>
+        <button class="act-btn" onclick="downloadExisting(${i})">⬇ HTML</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function playExisting(i){openPlayFrom(EXISTING_LEVELS,i);}
+function downloadExisting(i){
+  const l=EXISTING_LEVELS[i];
+  downloadHTML(buildPlayableHTMLFrom([l]),'WordTree_Level_'+l.id+'.html');
+}
+function downloadAllExisting(){
+  downloadHTML(buildPlayableHTMLFrom(EXISTING_LEVELS),'WordTree_AllLevels.html');
 }
 
 /* ══════════════════ Copy / export helpers ══════════════════ */
