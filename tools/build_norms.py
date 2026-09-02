@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Build norms.js from public word-game/psycholinguistics datasets.
+
+Inputs (download first; see RESOURCES.md):
+  count_1w.txt        — Norvig's Google-ngram frequency list (https://norvig.com/ngrams/count_1w.txt)
+  usf_free_association.txt — USF free association norms, parsed CSV
+                        (https://raw.githubusercontent.com/teonbrooks/free_association/master/free/free_association.txt)
+  connections.json    — NYT Connections answer archive
+                        (https://raw.githubusercontent.com/Eyefyre/NYT-Connections-Answers/main/connections.json)
+
+Output: norms.js defining
+  WT_FREQ_WORDS   — top-N words in frequency-rank order (comma-joined string)
+  WT_ASSOC        — USF forward association strengths (cue -> "TARGET|fsg,...") for FSG >= MIN_FSG
+  WT_CAT_EXAMPLES — real category examples by difficulty, mined from Connections (wordplay filtered out)
+  WT_THEMES       — curated theme-hint pool (Battig / Scattergories style)
+
+Usage: python3 build_norms.py <data_dir> <out_file>
+"""
+import json, re, sys
+
+FREQ_TOP_N = 60000
+MIN_FSG = 0.10
+
+def build_freq(path):
+    words = []
+    with open(path) as f:
+        for line in f:
+            w = line.split('\t')[0].strip().lower()
+            if re.fullmatch(r'[a-z]{2,}', w):
+                words.append(w)
+            if len(words) >= FREQ_TOP_N:
+                break
+    return words
+
+def build_assoc(path):
+    assoc = {}
+    with open(path, encoding='latin-1') as f:
+        next(f)  # header
+        for line in f:
+            parts = [p.strip() for p in line.split(',')]
+            if len(parts) < 6:
+                continue
+            cue, target, fsg = parts[0].upper(), parts[1].upper(), parts[5]
+            try:
+                s = float(fsg)
+            except ValueError:
+                continue
+            if s < MIN_FSG:
+                continue
+            if not re.fullmatch(r"[A-Z][A-Z '-]*", cue) or not re.fullmatch(r"[A-Z][A-Z '-]*", target):
+                continue
+            assoc.setdefault(cue, []).append(f'{target}|{s:.2f}')
+    return assoc
+
+WORDPLAY = re.compile(
+    r'___|"|“|\bPLUS\b|\bMINUS\b|ANAGRAM|HOMOPHONE|STARTING|\bENDING\b|FIRST LETTER|'
+    r'LAST LETTER|SPELLED|HIDDEN|REARRANG|BACKWARD|\bSILENT\b|PALINDROME|RHYME|SOUND')
+
+def build_cat_examples(path):
+    data = json.load(open(path))
+    pools = {'easy': [], 'medium': [], 'hard': []}
+    tier = {0: 'easy', 1: 'medium', 2: 'hard'}
+    seen = set()
+    for puz in data:
+        for ans in puz.get('answers', []):
+            lvl = ans.get('level')
+            if lvl not in tier:
+                continue
+            name = ans.get('group', '').strip()
+            members = ans.get('members', [])
+            if WORDPLAY.search(name.upper()) or len(name.split()) > 4 or not name:
+                continue
+            if any(not re.fullmatch(r"[A-Za-z][A-Za-z '\.-]*", m) for m in members):
+                continue
+            if any(WORDPLAY.search(m.upper()) for m in members):
+                continue
+            key = name.upper()
+            if key in seen:
+                continue
+            seen.add(key)
+            pools[tier[lvl]].append(f"{name.upper()}: {', '.join(m.upper() for m in members)}")
+    return pools
+
+THEMES = [
+    # Battig & Montague-style everyday categories
+    "kitchen","fruit","vegetables","four-footed animals","birds","fish","insects","flowers","trees",
+    "furniture","clothing","tools","vehicles","weather","body parts","sports","musical instruments",
+    "professions","metals","precious stones","units of time","relatives","beverages","dances",
+    "fabrics","toys","weapons","colors","countries","cities","diseases","sciences","crimes",
+    # Scattergories-style scene & situation themes
+    "beach day","camping trip","school","hospital","airport","farm","zoo","circus","library",
+    "restaurant","grocery store","garage","office","bathroom","playground","birthday party",
+    "wedding","halloween","winter holidays","summer vacation","road trip","picnic","movie night",
+    "amusement park","aquarium","bakery","barbershop","construction site","fire station","gym",
+    "hair salon","hardware store","laundry","mail and post","museum","orchestra","pet shop",
+    "pirate ship","space station","submarine","castle","desert","jungle","mountain","ocean",
+    "rainforest","volcano","garden","art class","science lab","music studio","sports stadium",
+    "train station","hotel","carnival","fishing trip","ski resort","tea party","magic show",
+    "detective story","fairy tale","superheroes","dinosaurs","ancient egypt","outer space",
+    "under the sea","insect world","bird watching","baking day","game night","car wash",
+]
+
+def main():
+    data_dir, out_file = sys.argv[1], sys.argv[2]
+    freq = build_freq(f'{data_dir}/count_1w.txt')
+    assoc = build_assoc(f'{data_dir}/usf_free_association.txt')
+    cats = build_cat_examples(f'{data_dir}/connections.json')
+    with open(out_file, 'w') as f:
+        f.write('// Generated by tools/build_norms.py — see RESOURCES.md for dataset provenance.\n')
+        f.write('window.WT_FREQ_WORDS=' + json.dumps(','.join(freq)) + ';\n')
+        f.write('window.WT_ASSOC=' + json.dumps({k: ','.join(v) for k, v in assoc.items()},
+                                                separators=(',', ':')) + ';\n')
+        f.write('window.WT_CAT_EXAMPLES=' + json.dumps(cats, separators=(',', ':')) + ';\n')
+        f.write('window.WT_THEMES=' + json.dumps(THEMES, separators=(',', ':')) + ';\n')
+    n_pairs = sum(len(v) for v in assoc.values())
+    print(f'freq words: {len(freq)} | assoc cues: {len(assoc)} pairs: {n_pairs} | '
+          f'examples: { {k: len(v) for k, v in cats.items()} } | themes: {len(THEMES)}')
+
+if __name__ == '__main__':
+    main()

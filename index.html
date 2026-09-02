@@ -202,6 +202,13 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
 .outline .o-word{color:var(--ink-mid);}
 .outline .o-badge{font-size:9px;color:var(--acc-yellow);margin-left:6px;letter-spacing:.05em;}
 
+/* Norms warnings */
+.warnbox{border-radius:var(--r-xl);padding:14px 18px;font-size:12px;font-weight:700;line-height:1.7;border:1.5px solid;}
+.warnbox.flagged{background:var(--med-bg);border-color:var(--med-border);color:var(--med-text);}
+.warnbox.clean{background:var(--easy-bg);border-color:var(--easy-border);color:var(--easy-text);}
+.warnbox .wb-title{font-size:10px;font-weight:900;letter-spacing:.14em;text-transform:uppercase;margin-bottom:6px;opacity:.85;}
+.warnbox .wb-row{display:block;}
+
 /* Export box */
 .expbox{background:var(--panel-bg);border:1.5px solid var(--border-strong);border-radius:var(--r-xl);overflow:hidden;box-shadow:var(--shad);backdrop-filter:blur(14px);}
 .exp-tabbar{display:flex;align-items:stretch;border-bottom:1px solid var(--border);background:var(--chip-bg);}
@@ -356,8 +363,11 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
     </div>
     <div class="fgrid">
       <div class="field">
-        <label class="lbl">Theme Hint <span style="text-transform:none;font-weight:600;opacity:.7">(optional)</span><span class="tip" tabindex="0" data-tip="Topic for the whole level — it becomes the ROOT word at the top of the tree, e.g. 'kitchen' → a KITCHEN root with kitchen-related branches. Leave blank to let Claude pick.">!</span></label>
-        <input type="text" id="themeHint" placeholder='"kitchen", "space", "music"…'>
+        <label class="lbl">Theme Hint <span style="text-transform:none;font-weight:600;opacity:.7">(optional)</span><span class="tip" tabindex="0" data-tip="Topic for the whole level — it becomes the ROOT word at the top of the tree, e.g. 'kitchen' → a KITCHEN root with kitchen-related branches. Leave blank to let Claude pick, or hit 🎲 for a random theme from a curated pool.">!</span></label>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="themeHint" placeholder='"kitchen", "space", "music"…' style="flex:1;">
+          <button class="act-btn" onclick="randomTheme()" title="Random theme from the curated pool" style="padding:9px 14px;flex-shrink:0;">🎲</button>
+        </div>
       </div>
       <div class="field">
         <label class="lbl">Difficulty Preset<span class="tip" tabindex="0" data-tip="One-click bundle: sets tree size, depth, vocabulary, hint count and move slack to match easy/medium/hard/expert shipped levels. You can still fine-tune every value below.">!</span></label>
@@ -495,6 +505,7 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
       </div>
     </div>
     <div class="outline" id="treeOutline"></div>
+    <div class="warnbox" id="warnBox" style="display:none"></div>
     <div class="expbox">
       <div class="exp-tabbar">
         <button class="exp-tab on" data-tab="one" onclick="switchExpTab('one')">📄 This Level (JSON)</button>
@@ -537,6 +548,7 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
 </div><!-- /page -->
 
 <script src="levels.js"></script>
+<script src="norms.js"></script>
 <script type="text/plain" id="gameSrc">/* Word Tree: Associations - prototype
    Single-file canvas build. LEVELS is injected above this script. */
 (function () {
@@ -1543,6 +1555,77 @@ function sanitizeTree(raw,opts){
   return {tree,count,dropped};
 }
 
+/* ══════════════════ Norms: frequency + association lookups ══════════════════ */
+// Backed by norms.js (built from Norvig frequency counts + USF free-association
+// norms + the NYT Connections archive — see RESOURCES.md). All lookups degrade
+// gracefully to "no data" if norms.js is missing.
+let _freqRank=null;
+function freqRank(w){ // 1-based frequency rank within top 60K, undefined if rarer, null if no data
+  if(!window.WT_FREQ_WORDS)return null;
+  if(!_freqRank){
+    _freqRank=new Map();
+    WT_FREQ_WORDS.split(',').forEach((word,i)=>_freqRank.set(word,i+1));
+  }
+  return _freqRank.get(w.toLowerCase());
+}
+let _assoc=null;
+function assocStrength(a,b){ // max directional USF strength between two words, 0 if unknown
+  if(!window.WT_ASSOC)return 0;
+  if(!_assoc){
+    _assoc=new Map();
+    for(const k in WT_ASSOC){
+      const m=new Map();
+      WT_ASSOC[k].split(',').forEach(t=>{const i=t.lastIndexOf('|');m.set(t.slice(0,i),parseFloat(t.slice(i+1)));});
+      _assoc.set(k,m);
+    }
+  }
+  const f=(x,y)=>{const m=_assoc.get(x);return (m&&m.get(y))||0;};
+  return Math.max(f(a,b),f(b,a));
+}
+function randomTheme(){
+  if(!window.WT_THEMES||!WT_THEMES.length)return;
+  document.getElementById('themeHint').value=WT_THEMES[Math.floor(Math.random()*WT_THEMES.length)];
+}
+
+// Post-generation quality check: familiarity gate + association-based ambiguity scan
+function analyzeLevel(r){
+  const warns=[];
+  const ns=r.level.ns;
+  const kids=ns.map(()=>[]);
+  ns.forEach((n,i)=>{(n.ps||[]).forEach(p=>kids[p].push(i));});
+  const tier={'6k':6000,'30k':30000}[r.opts.fam]; // only gate tiers our 60K rank data can judge
+  // 3x slack: web-derived ranks under-rank everyday words (KITTEN ~14K), so only
+  // flag words WELL outside the selected tier.
+  const limit=tier?Math.min(tier*3,60000):null;
+  ns.forEach((n,i)=>{
+    if(i===0||!tier)return;
+    const parts=n.sol.split(/[^A-Za-z]+/).filter(w=>w.length>=3);
+    for(const p of parts){
+      const rk=freqRank(p);
+      if(rk===null)break;
+      if(rk===undefined){warns.push(`“${n.sol}” isn't in the top 60K most common words — may be too obscure for the ${r.opts.fam.toUpperCase()} tier`);break;}
+      if(rk>limit){warns.push(`“${n.sol}” has frequency rank ~${rk.toLocaleString()} — well outside the selected top ${tier/1000}K vocabulary`);break;}
+    }
+  });
+  const internals=[];
+  kids.forEach((k,i)=>{if(k.length&&i!==0)internals.push(i);});
+  ns.forEach((n,i)=>{
+    if(i===0)return;
+    const p=n.ps[0];
+    const own=assocStrength(n.sol,ns[p].sol);
+    internals.forEach(q=>{
+      if(q===p||q===i)return;
+      // Siblings of the word itself are fine — the tree structure and given
+      // hints disambiguate same-parent slots (e.g. FRUIT vs VEGETABLE).
+      if(ns[q].ps&&ns[q].ps[0]===p)return;
+      const s=assocStrength(n.sol,ns[q].sol);
+      if(s>=0.15&&s>own)
+        warns.push(`“${n.sol}” associates with “${ns[q].sol}” (${s.toFixed(2)}) more strongly than with its own branch “${ns[p].sol}” (${own.toFixed(2)}) — players may misplace it`);
+    });
+  });
+  return warns;
+}
+
 /* ══════════════════ Prompt ══════════════════ */
 const FAM_DESC={
   '6k':'Use ONLY the ~6,000 most common English words — every word instantly recognizable to a child.',
@@ -1571,6 +1654,21 @@ function buildPrompt(opts,batchUsedWords,batchUsedNames){
     hard:'HARD: mostly familiar words but subtler groupings — the player should pause to think about where a word belongs.',
     expert:'EXPERT: subtle, specific associations and less common (but fair) vocabulary. Should genuinely challenge a word-game fan.'
   }[opts.preset];
+  // Reference examples: real word-game categories mined from the NYT Connections
+  // archive (wordplay filtered out), sampled fresh per request to calibrate style.
+  let exBlock='';
+  const pools=window.WT_CAT_EXAMPLES;
+  if(pools){
+    const pick=(arr,n)=>(arr||[]).slice().sort(()=>Math.random()-.5).slice(0,n);
+    const sample={
+      easy:pick(pools.easy,12),
+      medium:[...pick(pools.easy,4),...pick(pools.medium,8)],
+      hard:[...pick(pools.medium,4),...pick(pools.hard,8)],
+      expert:pick(pools.hard,12)
+    }[opts.preset]||[];
+    if(sample.length)
+      exBlock=`\n\nREFERENCE EXAMPLES — real word-game categories at roughly your target difficulty (category: members). Do NOT copy any of them; use them only to calibrate how specific and surprising your categories should be:\n${sample.join('\n')}`;
+  }
 
   return `You are an expert word-association puzzle designer for the mobile game "Word Tree: Associations".
 
@@ -1591,7 +1689,7 @@ RULES:
 - ALL words UPPERCASE. 1–2 words each, at most 18 characters including spaces. Plain A–Z letters only — no accents, no punctuation except apostrophe/hyphen where essential.
 - Every word in the tree must be UNIQUE — no repeats, no morphological cousins (BAKE and BAKER, LEAF and LEAVES).
 - Category names must be short nouns, never phrases like "TYPES OF X" or "THINGS THAT X".
-- Keep each sibling group consistent: same part of speech, same kind of relationship to the parent.${usedBlock}${cooldownBlock}
+- Keep each sibling group consistent: same part of speech, same kind of relationship to the parent.${usedBlock}${cooldownBlock}${exBlock}
 
 Return ONLY valid JSON, no markdown, in exactly this shape ("w" = word, "c" = children):
 {"levelTheme":"Short Title","tree":{"w":"FOOD","c":[{"w":"FRUIT","c":[{"w":"APPLE"},{"w":"BANANA"}]},{"w":"VEGETABLE","c":[{"w":"ONION"},{"w":"CARROT"}]}]}}`;
@@ -1773,9 +1871,20 @@ function renderLevel(idx){
   const lvl=r.level;
   const given=lvl.ns.filter(n=>n.g).length;
   let maxDepth=0;(function d(n,dep){maxDepth=Math.max(maxDepth,dep);(n.c||[]).forEach(c=>d(c,dep+1));})(r.tree,0);
+  const warns=analyzeLevel(r);
   document.getElementById('outTitle').textContent=r.levelTheme;
   document.getElementById('outMeta').textContent=
-    `Level ${lvl.id} · ${lvl.ns.length} nodes · depth ${maxDepth} · ${lvl.to.length} tray words · ${lvl.ml} moves · ${given} pre-filled${lvl.h?' · ✦ hard':''}`;
+    `Level ${lvl.id} · ${lvl.ns.length} nodes · depth ${maxDepth} · ${lvl.to.length} tray words · ${lvl.ml} moves · ${given} pre-filled${lvl.h?' · ✦ hard':''}${warns.length?` · ⚠ ${warns.length} flag${warns.length>1?'s':''}`:''}`;
+  const wb=document.getElementById('warnBox');
+  wb.style.display='block';
+  if(warns.length){
+    wb.className='warnbox flagged';
+    wb.innerHTML='<div class="wb-title">⚠ Norms check — worth a look before shipping</div>'+
+      warns.map(w=>`<span class="wb-row">• ${w}</span>`).join('');
+  }else{
+    wb.className='warnbox clean';
+    wb.innerHTML='<div class="wb-title">✓ Norms check</div><span class="wb-row">No familiarity or ambiguity flags from the frequency + association datasets.</span>';
+  }
   drawPreview(r);
   renderOutline(r);
   document.getElementById('bodyOne').textContent=JSON.stringify(lvl);
@@ -2127,6 +2236,7 @@ function toggleMusicCheck(checked){
 /* ══════════════════ Debug hooks (QA) ══════════════════ */
 window.WT={
   buildLevel, sanitizeTree, buildPrompt, readOpts, layoutTree, chipDim,
+  analyzeLevel, freqRank, assocStrength,
   inject(dataArr){ // feed mock AI results: [{levelTheme, tree}]
     batchResults=dataArr.map((d,i)=>{
       const opts=readOpts((parseInt(document.getElementById('levelId').value)||1)+i);
