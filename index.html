@@ -201,6 +201,10 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
 .outline .o-given{color:var(--ink);background:color-mix(in srgb, var(--ink) 12%, transparent);border-radius:6px;padding:1px 7px;}
 .outline .o-word{color:var(--ink-mid);}
 .outline .o-badge{font-size:9px;color:var(--acc-yellow);margin-left:6px;letter-spacing:.05em;}
+.outline .o-hint{font-size:10px;font-weight:800;color:var(--ink-muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;}
+.outline .o-editable{cursor:pointer;transition:outline-color .12s;outline:1.5px dashed transparent;outline-offset:2px;border-radius:6px;}
+.outline .o-editable:hover{outline-color:var(--acc);}
+.outline .o-input{font-family:'Source Code Pro',monospace;font-size:12px;background:var(--panel-bg);border:1.5px solid var(--acc);border-radius:6px;color:var(--ink);padding:1px 7px;width:18ch;outline:none;}
 
 /* Norms warnings */
 .warnbox{border-radius:var(--r-xl);padding:14px 18px;font-size:12px;font-weight:700;line-height:1.7;border:1.5px solid;}
@@ -466,8 +470,17 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
     </div>
     <div class="divider"></div>
     <div class="field">
-      <label class="lbl">Theme Cooldown<span class="tip" tabindex="0" data-tip="Root and category names from your past generations, remembered in this browser and excluded from new levels so players don't see the same themes twice. Reset to allow reuse.">!</span></label>
-      <p class="hint" style="margin-top:0;">Root and category names from previous generations are remembered in this browser and excluded from new levels.</p>
+      <label class="lbl">Theme &amp; Word Cooldown<span class="tip" tabindex="0" data-tip="Theme names AND every word from your past generations are remembered in this browser and excluded from new levels, so nothing repeats across batches. Reset to allow reuse.">!</span></label>
+      <p class="hint" style="margin-top:0;">Theme names and words from previous generations are remembered in this browser and excluded from new levels.</p>
+      <div class="checks" style="margin-top:10px;">
+        <label class="check-row">
+          <input type="checkbox" id="avoidShipped" checked>
+          <div>
+            <div class="check-lbl">Avoid shipped-level content</div>
+            <div class="check-hint">Excludes the 110 shipped levels' root/category themes from prompts, and the norms check flags any word that already appears in a shipped level</div>
+          </div>
+        </label>
+      </div>
       <div class="cd-status" id="cdStatus"></div>
       <div style="margin-top:8px;">
         <button class="act-btn" onclick="resetCooldowns()" style="font-size:12px;padding:6px 14px;">🔄 Reset Cooldowns</button>
@@ -1361,15 +1374,53 @@ function recordCooldown(names){
   }catch{}
   updateCdStatus();
 }
+const CDW_KEY='wt-recent-words';
+function getCooldownWords(){
+  try{const a=JSON.parse(localStorage.getItem(CDW_KEY)||'[]');return Array.isArray(a)?a:[];}catch{return[];}
+}
+function recordCooldownWords(words){
+  try{
+    let a=getCooldownWords();
+    const have=new Set(a);
+    words.forEach(w=>{w=cleanWord(w);if(w&&!have.has(w)){a.push(w);have.add(w);}});
+    if(a.length>1500)a=a.slice(a.length-1500);
+    localStorage.setItem(CDW_KEY,JSON.stringify(a));
+  }catch{}
+  updateCdStatus();
+}
 function resetCooldowns(){
-  try{localStorage.removeItem(CD_KEY);}catch{}
+  try{localStorage.removeItem(CD_KEY);localStorage.removeItem(CDW_KEY);}catch{}
   updateCdStatus();
 }
 function updateCdStatus(){
-  const n=getCooldownNames().length;
-  document.getElementById('cdStatus').textContent=n?`${n} theme name${n>1?'s':''} on cooldown`:'No themes on cooldown';
+  const n=getCooldownNames().length,w=getCooldownWords().length;
+  document.getElementById('cdStatus').textContent=(n||w)?`${n} theme name${n===1?'':'s'} · ${w} word${w===1?'':'s'} on cooldown`:'Nothing on cooldown';
 }
 updateCdStatus();
+
+// Shipped-level content (levels.js), for repeat avoidance
+let _shipWordMap=null;
+function shippedWordMap(){ // stemKey -> shipped level id (first occurrence)
+  if(_shipWordMap)return _shipWordMap;
+  _shipWordMap=new Map();
+  (window.EXISTING_LEVELS||[]).forEach(l=>l.ns.forEach(n=>{
+    const k=stemKey(n.sol);
+    if(!_shipWordMap.has(k))_shipWordMap.set(k,l.id);
+  }));
+  return _shipWordMap;
+}
+let _shipNames=null;
+function shippedTopNames(){ // roots + root-children category names across shipped levels
+  if(_shipNames)return _shipNames;
+  const set=new Set();
+  (window.EXISTING_LEVELS||[]).forEach(l=>l.ns.forEach((n,i)=>{
+    if(!n.ps)set.add(n.sol);
+    else if(n.ps.length===1&&!l.ns[n.ps[0]].ps)set.add(n.sol);
+  }));
+  _shipNames=[...set];
+  return _shipNames;
+}
+function avoidShippedOn(){const el=document.getElementById('avoidShipped');return !!(el&&el.checked);}
 
 /* ══════════════════ Progress bar ══════════════════ */
 const progressBar={
@@ -1501,21 +1552,52 @@ function buildLevel(tree,opts){
   if(margin==null||isNaN(margin))margin=Math.min(15,Math.max(p.minMargin,Math.ceil(to.length*p.marginF)));
   const ml=to.length+margin;
 
+  const lvl={id:opts.id, ml, ...computeCameras(ns), ns, to};
+  if(opts.hardStar)lvl.h=true;
+  return lvl;
+}
+
+function computeCameras(ns){
   const xs=ns.map(n=>n.x),ys=ns.map(n=>n.y);
   const x0=Math.min(...xs)-2.2,x1=Math.max(...xs)+2.2;
   const y0=Math.min(...ys)-1.6,y1=Math.max(...ys)+1.6;
   const cx=r2((x0+x1)/2),cy=r2((y0+y1)/2);
   const fullSz=r2(Math.max(x1-x0,(y1-y0)*1.05,8));
-  const startSz=Math.min(13,fullSz); // start a touch closer so chips read larger
+  return {c:{x:cx,y:cy,sz:Math.min(13,fullSz)},cs:{x:cx,y:cy,sz:fullSz}}; // start a touch closer so chips read larger
+}
 
-  const lvl={
-    id:opts.id, ml,
-    c:{x:cx,y:cy,sz:startSz},
-    cs:{x:cx,y:cy,sz:fullSz},
-    ns, to
-  };
-  if(opts.hardStar)lvl.h=true;
-  return lvl;
+// Re-derive coordinates and cameras after a word edit, WITHOUT touching
+// givens, tray order, or move limit — only chip widths changed.
+function relayoutLevel(r){
+  layoutTree(r.tree);
+  const flat=[];
+  (function walk(list){
+    const next=[];
+    list.forEach(n=>{flat.push(n);(n.c||[]).forEach(c=>next.push(c));});
+    if(next.length)walk(next);
+  })([r.tree]);
+  flat.forEach((n,i)=>{r.level.ns[i].x=r2(n.x);r.level.ns[i].y=r2(n.y);});
+  Object.assign(r.level,computeCameras(r.level.ns));
+}
+
+function applyWordEdit(nsIdx,val){
+  const r=batchResults[batchIdx];
+  if(!r)return;
+  const clean=cleanWord(val);
+  const orig=r.level.ns[nsIdx].sol;
+  if(!clean||clean===orig){renderLevel(batchIdx);return;}
+  if(clean.length>20){showErr('Word too long — 20 characters max.');renderLevel(batchIdx);return;}
+  const key=stemKey(clean);
+  let clash=null;
+  r.level.ns.forEach((n,i)=>{if(i!==nsIdx&&stemKey(n.sol)===key)clash=n.sol;});
+  if(clash){showErr(`“${clean}” clashes with “${clash}” already in this level.`);renderLevel(batchIdx);return;}
+  document.getElementById('errBox').className='errbox';
+  let node=null;
+  (function w(n){if(n._i===nsIdx)node=n;(n.c||[]).forEach(w);})(r.tree);
+  if(node)node.w=clean;
+  r.level.ns[nsIdx].sol=clean;
+  relayoutLevel(r);
+  renderLevel(batchIdx);
 }
 
 /* ══════════════════ AI output sanitize + validate ══════════════════ */
@@ -1607,6 +1689,16 @@ function analyzeLevel(r){
       if(rk>limit){warns.push(`“${n.sol}” has frequency rank ~${rk.toLocaleString()} — well outside the selected top ${tier/1000}K vocabulary`);break;}
     }
   });
+  // Repeat scan: flag words already used in a shipped level (in-batch and
+  // recent-generation repeats are excluded at the prompt level instead).
+  if(avoidShippedOn()&&window.EXISTING_LEVELS){
+    const map=shippedWordMap();
+    ns.forEach((n,i)=>{
+      if(i===0)return;
+      const id=map.get(stemKey(n.sol));
+      if(id!=null)warns.push(`“${n.sol}” already appears in shipped level ${id}`);
+    });
+  }
   const internals=[];
   kids.forEach((k,i)=>{if(k.length&&i!==0)internals.push(i);});
   ns.forEach((n,i)=>{
@@ -1637,10 +1729,19 @@ const ROOT_EXAMPLES='FOOD, BEACH, WEDDING, GARAGE, MUSIC, WEATHER, BODY, PETS, H
 
 function buildPrompt(opts,batchUsedWords,batchUsedNames){
   const cooldown=[...getCooldownNames(),...(batchUsedNames||[])];
+  if(avoidShippedOn())cooldown.push(...shippedTopNames());
   const cooldownBlock=cooldown.length
-    ?`\n\nDO NOT use any of these as the root or as category names, nor anything with a very similar meaning:\n${cooldown.slice(0,250).join(', ')}`:'';
-  const usedBlock=(batchUsedWords&&batchUsedWords.size)
-    ?`\n\nDO NOT use any of these words anywhere in the tree (or close variants like WIND/WINDY):\n${[...batchUsedWords].slice(0,500).join(', ')}`:'';
+    ?`\n\nDO NOT use any of these as the root or as category names, nor anything with a very similar meaning:\n${[...new Set(cooldown)].slice(0,300).join(', ')}`:'';
+  // Word exclusions: this batch's words first (highest priority), then words
+  // from previous generations remembered in this browser, capped at 500.
+  const usedWords=[];
+  (batchUsedWords||new Set()).forEach(w=>usedWords.push(w));
+  for(const w of getCooldownWords().slice().reverse()){ // most recent first
+    if(usedWords.length>=500)break;
+    if(!usedWords.includes(w))usedWords.push(w);
+  }
+  const usedBlock=usedWords.length
+    ?`\n\nDO NOT use any of these words anywhere in the tree (or close variants like WIND/WINDY):\n${usedWords.slice(0,500).join(', ')}`:'';
   const themeBlock=opts.theme?`\nTHEME: Build the tree around this theme: "${opts.theme}".`:'';
   const filterBlock=opts.filterContent?'\nCONTENT: Family-friendly only. No offensive, suggestive, or double-meaning words.':'';
   const depthBlock=opts.depth<=2
@@ -1806,8 +1907,9 @@ async function generate(){
       const level=buildLevel(data.tree,opts);
       batchResults.push({levelTheme:data.levelTheme,tree:data.tree,level,opts});
       collectTreeWords(data.tree,batchWords,batchNames);
-      const cdNames=[];collectTreeWords(data.tree,new Set(),cdNames);
+      const cdNames=[],cdWords=new Set();collectTreeWords(data.tree,cdWords,cdNames);
       recordCooldown(cdNames);
+      recordCooldownWords([...cdWords]);
     }
     document.getElementById('levelId').value=startId+count;
     updateGenBtnLabel();
@@ -1842,8 +1944,9 @@ async function regenerateCurrent(){
     const data=await streamTree(key,model,buildPrompt(old.opts,words,names),old.opts);
     const level=buildLevel(data.tree,old.opts);
     batchResults[idx]={levelTheme:data.levelTheme,tree:data.tree,level,opts:old.opts};
-    const cdNames=[];collectTreeWords(data.tree,new Set(),cdNames);
+    const cdNames=[],cdWords=new Set();collectTreeWords(data.tree,cdWords,cdNames);
     recordCooldown(cdNames);
+    recordCooldownWords([...cdWords]);
     sb.className='stream';
     renderLevel(idx);
   }catch(err){
@@ -1894,18 +1997,34 @@ function renderLevel(idx){
 }
 
 function renderOutline(r){
-  const givenSet=new Set();
-  r.level.ns.forEach((n,i)=>{if(n.g)givenSet.add(n.sol);});
-  let html='';
+  let html='<div class="o-hint">✎ Click any word to edit it in place</div>';
   (function walk(n,depth){
     const pad='&nbsp;'.repeat(depth*4);
-    const cls=depth===0?'o-root':(givenSet.has(n.w)?'o-given':'o-word');
-    const badge=depth===0?'<span class="o-badge">ROOT</span>':(givenSet.has(n.w)?'<span class="o-badge">GIVEN</span>':'');
-    html+=`<div>${pad}${depth>0?'└ ':''}<span class="${cls}">${n.w}</span>${badge}</div>`;
+    const given=r.level.ns[n._i]&&r.level.ns[n._i].g;
+    const cls=depth===0?'o-root':(given?'o-given':'o-word');
+    const badge=depth===0?'<span class="o-badge">ROOT</span>':(given?'<span class="o-badge">GIVEN</span>':'');
+    html+=`<div>${pad}${depth>0?'└ ':''}<span class="${cls} o-editable" data-i="${n._i}" title="Click to edit">${n.w}</span>${badge}</div>`;
     (n.c||[]).forEach(c=>walk(c,depth+1));
   })(r.tree,0);
   document.getElementById('treeOutline').innerHTML=html;
 }
+document.getElementById('treeOutline').addEventListener('click',e=>{
+  const span=e.target.closest('.o-editable');
+  if(!span||span.querySelector('input'))return;
+  const i=parseInt(span.dataset.i);
+  const cur=span.textContent;
+  span.innerHTML=`<input class="o-input" maxlength="20" value="${cur.replace(/"/g,'&quot;')}">`;
+  const inp=span.querySelector('input');
+  inp.focus();inp.select();
+  let done=false;
+  const commit=()=>{if(done)return;done=true;applyWordEdit(i,inp.value);};
+  inp.addEventListener('keydown',ev=>{
+    if(ev.key==='Enter')commit();
+    else if(ev.key==='Escape'){done=true;renderLevel(batchIdx);}
+    ev.stopPropagation();
+  });
+  inp.addEventListener('blur',commit);
+});
 
 /* ══════════════════ Preview canvas ══════════════════ */
 function drawPreview(r){
@@ -2236,7 +2355,7 @@ function toggleMusicCheck(checked){
 /* ══════════════════ Debug hooks (QA) ══════════════════ */
 window.WT={
   buildLevel, sanitizeTree, buildPrompt, readOpts, layoutTree, chipDim,
-  analyzeLevel, freqRank, assocStrength,
+  analyzeLevel, freqRank, assocStrength, applyWordEdit, relayoutLevel,
   inject(dataArr){ // feed mock AI results: [{levelTheme, tree}]
     batchResults=dataArr.map((d,i)=>{
       const opts=readOpts((parseInt(document.getElementById('levelId').value)||1)+i);
