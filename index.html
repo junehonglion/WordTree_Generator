@@ -235,7 +235,7 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
 /* Play modal */
 .play-overlay{position:fixed;inset:0;z-index:20000;background:rgba(2,10,6,.88);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;padding:20px;}
 .play-overlay.on{display:flex;}
-.play-frame-wrap{position:relative;height:min(92vh,960px);aspect-ratio:9/16;max-width:94vw;border-radius:20px;overflow:hidden;box-shadow:0 20px 80px rgba(0,0,0,.6),0 0 0 1.5px var(--border-strong);}
+.play-frame-wrap{position:relative;height:min(96vh,1280px);aspect-ratio:9/16;max-width:96vw;border-radius:20px;overflow:hidden;box-shadow:0 20px 80px rgba(0,0,0,.6),0 0 0 1.5px var(--border-strong);}
 .play-frame-wrap iframe{width:100%;height:100%;border:none;display:block;background:#0a0f24;}
 .play-close{position:absolute;top:10px;right:10px;z-index:2;width:38px;height:38px;border-radius:50%;border:1.5px solid rgba(255,255,255,.3);background:rgba(0,0,0,.5);color:#fff;font-size:18px;font-weight:900;cursor:pointer;line-height:1;backdrop-filter:blur(6px);}
 .play-close:hover{background:rgba(240,96,96,.8);}
@@ -1387,9 +1387,10 @@ function chipDim(sol){
 
 /* ══════════════════ Tree layout ══════════════════ */
 // Classic tidy layout: subtree spans from chip widths, children centered
-// under the parent, one row per depth. Spacing matches the shipped levels
-// (sibling gap ≈ 2.5 world units center-to-center, row gap ≈ 2.9).
-const SIB_GAP=0.34, ROW_GAP=2.9, ROOT_LIFT=0.6;
+// under the parent, one row per depth. Slightly roomier than the shipped
+// levels (their sibling chips nearly touch): wider sibling gaps and taller
+// rows so cells and branches have breathing room.
+const SIB_GAP=0.60, ROW_GAP=3.4, ROOT_LIFT=0.8;
 function layoutTree(root){
   let maxDepth=0;
   (function dep(n,d){n.depth=d;maxDepth=Math.max(maxDepth,d);(n.c||[]).forEach(ch=>dep(ch,d+1));})(root,0);
@@ -1493,7 +1494,7 @@ function buildLevel(tree,opts){
   const y0=Math.min(...ys)-1.6,y1=Math.max(...ys)+1.6;
   const cx=r2((x0+x1)/2),cy=r2((y0+y1)/2);
   const fullSz=r2(Math.max(x1-x0,(y1-y0)*1.05,8));
-  const startSz=Math.min(14,fullSz);
+  const startSz=Math.min(13,fullSz); // start a touch closer so chips read larger
 
   const lvl={
     id:opts.id, ml,
