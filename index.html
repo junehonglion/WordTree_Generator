@@ -308,8 +308,8 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
     </h1>
     <p class="pg-sub">Create association tree levels for Word Tree: Associations</p>
     <div class="lang-wrap">
-      <button class="lang-btn on" data-lang="en" onclick="setLang('en')">EN</button>
-      <button class="lang-btn" data-lang="tr" onclick="setLang('tr')">TR</button>
+      <button class="lang-btn" data-lang="en" onclick="setLang('en')">EN</button>
+      <button class="lang-btn on" data-lang="tr" onclick="setLang('tr')">TR</button>
     </div>
     <div class="toggle-wrap">
       <div class="toggle-row">
@@ -1324,8 +1324,8 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
 /* ══════════════════ Language (UI only — generated words stay English) ══════════════════ */
 // Static text is snapshotted from the DOM at load and swapped via the WT_TR
 // dictionary (i18n.js); dynamic strings go through t()/tf() at render time.
-let LANG='en';
-try{if(localStorage.getItem('wt-lang')==='tr')LANG='tr';}catch{}
+let LANG='tr'; // Turkish by default; a saved preference overrides
+try{if(localStorage.getItem('wt-lang')==='en')LANG='en';}catch{}
 const TRD=window.WT_TR||{};
 function t(s){return LANG==='tr'&&TRD[s]?TRD[s]:s;}
 function tf(s,vars){let out=t(s);for(const k in vars)out=out.split('{'+k+'}').join(vars[k]);return out;}
