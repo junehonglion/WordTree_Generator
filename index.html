@@ -330,7 +330,7 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
     <button class="mode-tab on" data-mode="gen" onclick="switchMode('gen')">
       <span class="mt-icon">🔗</span>
       <div class="mt-title">AI Generator</div>
-      <div class="mt-sub">Generate fresh levels with Claude</div>
+      <div class="mt-sub">Generate fresh levels with AI</div>
     </button>
     <button class="mode-tab" data-mode="lib" onclick="switchMode('lib')">
       <span class="mt-icon">🕹️</span>
@@ -345,20 +345,20 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
   <div class="card">
     <div class="sec-head">Configuration</div>
     <div class="field">
-      <label class="lbl" for="apiKey">Anthropic API Key</label>
+      <label class="lbl" for="apiKey">AI API Key</label>
       <input type="password" id="apiKey" placeholder="sk-ant-api03-...">
-      <p class="api-note">Stays in your browser — sent only to the Anthropic API.</p>
+      <p class="api-note">Stays in your browser — sent only to the AI provider’s API.</p>
     </div>
     <div class="fgrid">
       <div class="field">
-        <label class="lbl">Model<span class="tip" tabindex="0" data-tip="Which Claude model invents the word trees. Opus 5 is the best balance; Fable 5 is strongest at avoiding words that could fit two slots; Sonnet/Haiku are cheaper for drafts.">!</span></label>
+        <label class="lbl">Model<span class="tip" tabindex="0" data-tip="Which AI engine invents the word trees. Advanced is the best balance; Frontier is strongest at avoiding words that could fit two slots; Standard and Lite are cheaper for drafts.">!</span></label>
         <select id="modelSel">
-          <option value="claude-fable-5">Claude Fable 5 — most capable, premium price</option>
-          <option value="claude-opus-5" selected>Claude Opus 5 — best quality</option>
-          <option value="claude-sonnet-5">Claude Sonnet 5 — faster / cheaper</option>
-          <option value="claude-haiku-4-5">Claude Haiku 4.5 — cheapest</option>
+          <option value="claude-fable-5">Frontier — most capable, premium price</option>
+          <option value="claude-opus-5" selected>Advanced — best quality</option>
+          <option value="claude-sonnet-5">Standard — faster / cheaper</option>
+          <option value="claude-haiku-4-5">Lite — cheapest</option>
         </select>
-        <p class="hint" id="modelHint" style="display:none;">Fable 5 needs an API org with standard (30-day) data retention — zero-retention orgs get an error.</p>
+        <p class="hint" id="modelHint" style="display:none;">The Frontier engine needs an API account with standard (30-day) data retention — zero-retention accounts get an error.</p>
       </div>
       <div class="field">
         <label class="lbl">Start Level ID<span class="tip" tabindex="0" data-tip="The number shown as 'LEVEL N' in the game's header and level-select grid. Use the next unused ID in your LEVELS array; batches auto-increment from here.">!</span></label>
@@ -367,7 +367,7 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
     </div>
     <div class="fgrid">
       <div class="field">
-        <label class="lbl">Theme Hint <span style="text-transform:none;font-weight:600;opacity:.7">(optional)</span><span class="tip" tabindex="0" data-tip="Topic for the whole level — it becomes the ROOT word at the top of the tree, e.g. 'kitchen' → a KITCHEN root with kitchen-related branches. Leave blank to let Claude pick, or hit 🎲 for a random theme from a curated pool.">!</span></label>
+        <label class="lbl">Theme Hint <span style="text-transform:none;font-weight:600;opacity:.7">(optional)</span><span class="tip" tabindex="0" data-tip="Topic for the whole level — it becomes the ROOT word at the top of the tree, e.g. 'kitchen' → a KITCHEN root with kitchen-related branches. Leave blank to let the AI pick, or hit 🎲 for a random theme from a curated pool.">!</span></label>
         <div style="display:flex;gap:8px;">
           <input type="text" id="themeHint" placeholder='"kitchen", "space", "music"…' style="flex:1;">
           <button class="act-btn" onclick="randomTheme()" title="Random theme from the curated pool" style="padding:9px 14px;flex-shrink:0;">🎲</button>
@@ -399,7 +399,7 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
         </select>
       </div>
       <div class="field">
-        <label class="lbl">Target Words<span class="tip" tabindex="0" data-tip="Approximate total chips in the level — root + categories + words. Shipped levels range from 7 (tutorial) to ~80 (late game). Claude aims within ±20% of this.">!</span></label>
+        <label class="lbl">Target Words<span class="tip" tabindex="0" data-tip="Approximate total chips in the level — root + categories + words. Shipped levels range from 7 (tutorial) to ~80 (late game). The AI aims within ±20% of this.">!</span></label>
         <input type="number" id="targetWords" min="6" max="90" value="24">
         <p class="hint">Total nodes incl. root</p>
       </div>
@@ -1883,7 +1883,7 @@ function collectTreeWords(tree,words,names){
 
 async function generate(){
   const key=document.getElementById('apiKey').value.trim();
-  if(!key){showErr('Please enter your Anthropic API key.');return;}
+  if(!key){showErr('Please enter your API key.');return;}
   const model=document.getElementById('modelSel').value;
   const count=Math.min(50,Math.max(1,parseInt(document.getElementById('batchCount').value)||1));
   const startId=parseInt(document.getElementById('levelId').value)||1;
@@ -1901,7 +1901,7 @@ async function generate(){
   try{
     for(let i=0;i<count;i++){
       const opts=readOpts(startId+i);
-      progressBar.update(i,count,`Level ${opts.id} — asking Claude…`);
+      progressBar.update(i,count,`Level ${opts.id} — asking the AI…`);
       sb.textContent=`Generating level ${opts.id}${count>1?` (${i+1}/${count})`:''}…\n`;
       const data=await streamTree(key,model,buildPrompt(opts,batchWords,batchNames),opts);
       const level=buildLevel(data.tree,opts);
@@ -1930,7 +1930,7 @@ async function generate(){
 async function regenerateCurrent(){
   if(!batchResults.length)return;
   const key=document.getElementById('apiKey').value.trim();
-  if(!key){showErr('Please enter your Anthropic API key.');return;}
+  if(!key){showErr('Please enter your API key.');return;}
   const model=document.getElementById('modelSel').value;
   const idx=batchIdx, old=batchResults[idx];
   const btn=document.getElementById('regenBtn');
