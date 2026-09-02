@@ -1454,7 +1454,20 @@ function buildLevel(tree,opts){
   });
   const to=[];
   for(let i=1;i<ns.length;i++)if(!ns[i].g)to.push(i);
-  to.sort(()=>Math.random()-.5);
+  // The production game deals the first 10 of `to` and refills one word per
+  // placement, so queue order shapes the opening. Shipped levels mildly
+  // front-load immediately-placeable words (deeper nodes with a given parent
+  // or sibling); mirror that with a soft score-weighted shuffle.
+  const depthOf=i=>{let d=0,p=i;while(ns[p].ps){p=ns[p].ps[0];d++;}return d;};
+  const score=i=>{
+    const p=ns[i].ps[0];
+    return (ns[p].g?1.2:0)
+      +(kids[p].some(s=>s!==i&&ns[s].g)?0.5:0)
+      +depthOf(i)*0.25
+      +Math.random()*2.2;
+  };
+  const scores=new Map(to.map(i=>[i,score(i)]));
+  to.sort((a,b)=>scores.get(b)-scores.get(a));
 
   const p=PRESETS[opts.preset]||PRESETS.medium;
   let margin=opts.moveMargin;
@@ -1863,8 +1876,24 @@ const GAME_HEAD=`<!DOCTYPE html>
 <canvas id="cv"></canvas>
 `;
 
+// Production tray behavior (confirmed by the game team): the first 10 entries
+// of `to` are dealt as the initial tray; each placed word pulls the next entry
+// from the queue. The prototype engine shows everything at once, so patch it
+// to match production before embedding/exporting.
+const TRAY_DEAL=10;
+function patchGameJs(js){
+  const p1='tray: tray, moves: L.ml,';
+  const p2='S.tray.splice(trayIdx, 1);';
+  if(!js.includes(p1)||!js.includes(p2)){
+    console.warn('Tray-refill patch anchors not found — exporting unpatched engine.');
+    return js;
+  }
+  js=js.replace(p1,'tray: tray.slice(0, TRAY_DEAL), queue: tray.slice(TRAY_DEAL), moves: L.ml,');
+  js=js.replace(p2,'S.tray.splice(trayIdx, 1);\n      if (S.queue.length) S.tray.push(S.queue.shift());');
+  return 'var TRAY_DEAL='+TRAY_DEAL+';\n'+js;
+}
 function buildPlayableHTMLFrom(levels){
-  const gameJs=document.getElementById('gameSrc').textContent;
+  const gameJs=patchGameJs(document.getElementById('gameSrc').textContent);
   return GAME_HEAD
     +'<script>var LEVELS='+JSON.stringify(levels)+';<\/script>\n'
     +'<script>'+gameJs+'<\/script>\n</body>\n</html>';
