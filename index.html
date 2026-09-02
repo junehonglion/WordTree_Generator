@@ -1506,30 +1506,71 @@ function chipDim(sol){
 }
 
 /* ══════════════════ Tree layout ══════════════════ */
-// Classic tidy layout: subtree spans from chip widths, children centered
-// under the parent, one row per depth. Slightly roomier than the shipped
-// levels (their sibling chips nearly touch): wider sibling gaps and taller
-// rows so cells and branches have breathing room.
-const SIB_GAP=0.60, ROW_GAP=3.4, ROOT_LIFT=0.8;
+// Tidy layout with shelf wrapping. Each category subtree is laid out locally
+// (children centered under parents, one row per local depth); wide trees then
+// wrap category subtrees onto TWO shelves — like shipped levels that stagger
+// categories at different heights — so the whole tree fits a portrait screen
+// instead of becoming one thin wide band. The second shelf hangs below the
+// first, reached by the root's drop line through a central corridor, and is
+// wired up with a real "cf" junction group the game engine draws natively.
+const SIB_GAP=0.60, ROW_GAP=3.4, ROOT_LIFT=0.8, WRAP_W=20, CORRIDOR=1.8;
 function layoutTree(root){
-  let maxDepth=0;
-  (function dep(n,d){n.depth=d;maxDepth=Math.max(maxDepth,d);(n.c||[]).forEach(ch=>dep(ch,d+1));})(root,0);
-  (function span(n){
+  const kids=root.c||[];
+  root.dim=chipDim(root.w);
+  root._cfKids=null;root._cfY=null;
+  if(!kids.length){root.x=0;root.y=ROOT_LIFT;return;}
+  function span(n){
     n.dim=chipDim(n.w);
     if(!n.c||!n.c.length){n.span=n.dim.w+SIB_GAP;return;}
     n.c.forEach(span);
     n.span=Math.max(n.dim.w+SIB_GAP,n.c.reduce((a,c)=>a+c.span,0));
-  })(root);
-  (function place(n,x0){
-    if(!n.c||!n.c.length){n.x=x0+n.span/2;}
-    else{
-      let cx=x0+(n.span-n.c.reduce((a,c)=>a+c.span,0))/2;
-      n.c.forEach(ch=>{place(ch,cx);cx+=ch.span;});
-      n.x=(n.c[0].x+n.c[n.c.length-1].x)/2;
-    }
-    n.y=(maxDepth-n.depth)*ROW_GAP+(n.depth===0?ROOT_LIFT:0);
-  })(root,0);
-  return maxDepth;
+  }
+  function place(n,x0,d){ // local coords: lx within [x0..x0+span], ld = depth below category
+    n.ld=d;
+    if(!n.c||!n.c.length){n.lx=x0+n.span/2;return d;}
+    let cx=x0+(n.span-n.c.reduce((a,c)=>a+c.span,0))/2,dm=d;
+    n.c.forEach(ch=>{dm=Math.max(dm,place(ch,cx,d+1));cx+=ch.span;});
+    n.lx=(n.c[0].lx+n.c[n.c.length-1].lx)/2;
+    return dm;
+  }
+  function applySub(s,x0,catY){
+    (function apply(n){n.x=x0+n.lx;n.y=catY-n.ld*ROW_GAP;(n.c||[]).forEach(apply);})(s.n);
+  }
+  const subs=kids.map(k=>{span(k);const d=place(k,0,0);return {n:k,w:k.span,d};});
+  const totalW=subs.reduce((a,s)=>a+s.w,0);
+  root.y=ROW_GAP+ROOT_LIFT;
+  if(totalW<=WRAP_W||subs.length<3){
+    // single shelf — classic layout
+    let x=-totalW/2;
+    subs.forEach(s=>{applySub(s,x,0);x+=s.w;});
+    root.x=r2((kids[0].x+kids[kids.length-1].x)/2);
+    return;
+  }
+  // two shelves, greedy-balanced by width, original order preserved per shelf
+  const a=[],b=[];let wa=0,wb=0;
+  subs.slice().sort((x,y)=>y.w-x.w).forEach(s=>{
+    if(wa<=wb){a.push(s);wa+=s.w;}else{b.push(s);wb+=s.w;}
+  });
+  const order=s=>subs.indexOf(s);
+  a.sort((x,y)=>order(x)-order(y));b.sort((x,y)=>order(x)-order(y));
+  // shelf 1 at catY=0, split around a central corridor for the root's drop line
+  const WA=a.reduce((s2,s)=>s2+s.w,0);
+  let acc=0,cut=a.length;
+  for(let i=0;i<a.length;i++){if(acc+a[i].w/2>=WA/2){cut=i;break;}acc+=a[i].w;}
+  const L=a.slice(0,Math.max(1,cut)),R=a.slice(Math.max(1,cut));
+  let x=-L.reduce((s2,s)=>s2+s.w,0)-CORRIDOR/2;
+  L.forEach(s=>{applySub(s,x,0);x+=s.w;});
+  x=CORRIDOR/2;
+  R.forEach(s=>{applySub(s,x,0);x+=s.w;});
+  // shelf 2 hangs below shelf 1's deepest row, centered on the corridor
+  const D1=Math.max(...a.map(s=>s.d));
+  const catY2=-(D1+1)*ROW_GAP;
+  const WB=b.reduce((s2,s)=>s2+s.w,0);
+  x=-WB/2;
+  b.forEach(s=>{applySub(s,x,catY2);x+=s.w;});
+  root.x=0;
+  root._cfKids=b.map(s=>s.n);
+  root._cfY=catY2+1.2;
 }
 
 /* ══════════════════ Level assembly ══════════════════ */
@@ -1609,9 +1650,18 @@ function buildLevel(tree,opts){
   if(margin==null||isNaN(margin))margin=Math.min(15,Math.max(p.minMargin,Math.ceil(to.length*p.marginF)));
   const ml=to.length+margin;
 
+  applyRootCf(tree,ns);
   const lvl={id:opts.id, ml, ...computeCameras(ns), ns, to};
   if(opts.hardStar)lvl.h=true;
   return lvl;
+}
+
+// Second-shelf categories connect through their own junction group, exactly
+// like shipped levels' "cf" fans.
+function applyRootCf(tree,ns){
+  delete ns[0].cf;
+  if(tree._cfKids&&tree._cfKids.length)
+    ns[0].cf=[{ms:tree._cfKids.map(k=>k._i),jc:{x:r2(tree.x),y:r2(tree._cfY)}}];
 }
 
 function computeCameras(ns){
@@ -1620,7 +1670,10 @@ function computeCameras(ns){
   const y0=Math.min(...ys)-1.6,y1=Math.max(...ys)+1.6;
   const cx=r2((x0+x1)/2),cy=r2((y0+y1)/2);
   const fullSz=r2(Math.max(x1-x0,(y1-y0)*1.05,8));
-  return {c:{x:cx,y:cy,sz:Math.min(13,fullSz)},cs:{x:cx,y:cy,sz:fullSz}}; // start a touch closer so chips read larger
+  // Start fully fitted (c === cs, like early shipped levels): opening on a
+  // zoomed slice shows cropped chips and stray connector lines. Players can
+  // still pinch-zoom in for large trees.
+  return {c:{x:cx,y:cy,sz:fullSz},cs:{x:cx,y:cy,sz:fullSz}};
 }
 
 // Re-derive coordinates and cameras after a word edit, WITHOUT touching
@@ -1634,6 +1687,7 @@ function relayoutLevel(r){
     if(next.length)walk(next);
   })([r.tree]);
   flat.forEach((n,i)=>{r.level.ns[i].x=r2(n.x);r.level.ns[i].y=r2(n.y);});
+  applyRootCf(r.tree,r.level.ns);
   Object.assign(r.level,computeCameras(r.level.ns));
 }
 
@@ -2106,26 +2160,34 @@ function drawPreview(r){
   const kids=ns.map(()=>[]);
   ns.forEach((n,i)=>{(n.ps||[]).forEach(p=>kids[p].push(i));});
 
-  // edges — same elbow routing idea as the game
+  // edges — same elbow routing as the game, including cf junction groups
   ctx.strokeStyle='#e9e9f2';ctx.lineWidth=Math.max(1.5,0.11*s);ctx.lineCap='round';ctx.lineJoin='round';
   ns.forEach((p,pi)=>{
     if(!kids[pi].length)return;
-    let topY=-1e9;
-    kids[pi].forEach(ci=>topY=Math.max(topY,ns[ci].y));
-    let jy=Math.min(p.y-0.85,topY+1.2);
-    if(jy<=topY)jy=topY+0.6;
-    const px=wx(p.x),pTop=wy(p.y+CHIP_H/2)-0;
+    const groups=[],covered={};
+    (p.cf||[]).forEach(g=>{groups.push({ms:g.ms,jy:g.jc.y});g.ms.forEach(m=>covered[m]=1);});
+    const rest=kids[pi].filter(ci=>!covered[ci]);
+    if(rest.length){
+      let topY=-1e9;
+      rest.forEach(ci=>topY=Math.max(topY,ns[ci].y));
+      let jy=Math.min(p.y-0.85,topY+1.2);
+      if(jy<=topY)jy=topY+0.6;
+      groups.push({ms:rest,jy});
+    }
+    const px=wx(p.x);
     const pBot=wy(p.y-CHIP_H/2);
-    const jsy=wy(jy);
-    kids[pi].forEach(ci=>{
-      const c=ns[ci];
-      const cx2=wx(c.x),cTop=wy(c.y+CHIP_H/2);
-      ctx.beginPath();
-      ctx.moveTo(px,pBot);
-      ctx.lineTo(px,jsy);
-      ctx.lineTo(cx2,jsy);
-      ctx.lineTo(cx2,cTop);
-      ctx.stroke();
+    groups.forEach(G=>{
+      const jsy=wy(G.jy);
+      G.ms.forEach(ci=>{
+        const c=ns[ci];
+        const cx2=wx(c.x),cTop=wy(c.y+CHIP_H/2);
+        ctx.beginPath();
+        ctx.moveTo(px,pBot);
+        ctx.lineTo(px,jsy);
+        ctx.lineTo(cx2,jsy);
+        ctx.lineTo(cx2,cTop);
+        ctx.stroke();
+      });
     });
   });
 
