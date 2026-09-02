@@ -67,6 +67,10 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;bac
 @keyframes fade-in{0%{opacity:0;transform:translateY(8px);}100%{opacity:1;transform:translateY(0);}}
 .pg-sub{font-size:13px;color:var(--ink-mid);margin-top:7px;font-weight:700;letter-spacing:.02em;opacity:0;animation:fade-in .6s ease 1.1s forwards;}
 .toggle-wrap{position:absolute;top:8px;right:0;display:flex;flex-direction:column;align-items:flex-end;gap:10px;}
+.lang-wrap{position:absolute;top:8px;left:0;display:flex;gap:0;border:1.5px solid var(--border-strong);border-radius:var(--pill);overflow:hidden;background:var(--chip-bg);}
+.lang-btn{padding:6px 13px;border:none;background:transparent;font-family:'Nunito',sans-serif;font-size:11px;font-weight:900;letter-spacing:.06em;color:var(--ink-muted);cursor:pointer;transition:all .15s;}
+.lang-btn:hover{color:var(--ink);}
+.lang-btn.on{background:var(--acc);color:var(--acc-text);}
 .toggle-row{display:flex;align-items:center;gap:8px;}
 .toggle-icon{font-size:13px;color:var(--ink-muted);user-select:none;width:16px;text-align:center;}
 .toggle-switch{position:relative;display:inline-block;width:44px;height:24px;cursor:pointer;flex-shrink:0;}
@@ -303,6 +307,10 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
       <span class="rest">GENERATOR</span>
     </h1>
     <p class="pg-sub">Create association tree levels for Word Tree: Associations</p>
+    <div class="lang-wrap">
+      <button class="lang-btn on" data-lang="en" onclick="setLang('en')">EN</button>
+      <button class="lang-btn" data-lang="tr" onclick="setLang('tr')">TR</button>
+    </div>
     <div class="toggle-wrap">
       <div class="toggle-row">
         <span class="toggle-icon">☀</span>
@@ -562,6 +570,7 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
 
 <script src="levels.js"></script>
 <script src="norms.js"></script>
+<script src="i18n.js"></script>
 <script type="text/plain" id="gameSrc">/* Word Tree: Associations - prototype
    Single-file canvas build. LEVELS is injected above this script. */
 (function () {
@@ -1312,6 +1321,54 @@ input::placeholder{color:var(--ink-muted);font-weight:600;}
 <script>
 'use strict';
 
+/* ══════════════════ Language (UI only — generated words stay English) ══════════════════ */
+// Static text is snapshotted from the DOM at load and swapped via the WT_TR
+// dictionary (i18n.js); dynamic strings go through t()/tf() at render time.
+let LANG='en';
+try{if(localStorage.getItem('wt-lang')==='tr')LANG='tr';}catch{}
+const TRD=window.WT_TR||{};
+function t(s){return LANG==='tr'&&TRD[s]?TRD[s]:s;}
+function tf(s,vars){let out=t(s);for(const k in vars)out=out.split('{'+k+'}').join(vars[k]);return out;}
+let _i18nNodes=null;
+function snapshotI18n(){
+  _i18nNodes=[];
+  const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,{acceptNode(n){
+    const p=n.parentElement;
+    if(!p||p.closest('script,style'))return NodeFilter.FILTER_REJECT;
+    return n.nodeValue.trim()?NodeFilter.FILTER_ACCEPT:NodeFilter.FILTER_REJECT;
+  }});
+  let n;
+  while(n=walker.nextNode())_i18nNodes.push({node:n,orig:n.nodeValue});
+  document.querySelectorAll('[data-tip]').forEach(el=>_i18nNodes.push({el,attr:'data-tip',orig:el.getAttribute('data-tip')}));
+  document.querySelectorAll('input[placeholder]').forEach(el=>_i18nNodes.push({el,attr:'placeholder',orig:el.getAttribute('placeholder')}));
+}
+function applyLang(){
+  if(!_i18nNodes)snapshotI18n();
+  _i18nNodes.forEach(e=>{
+    const key=e.orig.trim();
+    const val=(LANG==='tr'&&TRD[key])?e.orig.replace(key,TRD[key]):e.orig;
+    if(e.attr)e.el.setAttribute(e.attr,val);
+    else e.node.nodeValue=val;
+  });
+  document.documentElement.lang=LANG==='tr'?'tr':'en';
+  document.querySelectorAll('.lang-btn').forEach(b=>b.classList.toggle('on',b.dataset.lang===LANG));
+}
+function setLang(lang){
+  LANG=lang==='tr'?'tr':'en';
+  try{localStorage.setItem('wt-lang',LANG);}catch{}
+  applyLang();
+  updateGenBtnLabel();
+  updateCdStatus();
+  if(batchResults.length)renderLevel(batchIdx);
+  libRendered=false;
+  if(document.getElementById('view-lib').style.display!=='none')renderLibrary();
+}
+// Debug: list visible strings with no TR entry
+function i18nAudit(){
+  if(!_i18nNodes)snapshotI18n();
+  return [...new Set(_i18nNodes.map(e=>e.orig.trim()).filter(k=>k&&!TRD[k]))];
+}
+
 /* ══════════════════ Theme ══════════════════ */
 function toggleTheme(isDark){
   document.documentElement.classList.toggle('dark', isDark);
@@ -1357,7 +1414,7 @@ document.getElementById('modelSel').addEventListener('change',function(){
 function updateGenBtnLabel(){
   const id=parseInt(document.getElementById('levelId').value)||1;
   const n=Math.min(50,Math.max(1,parseInt(document.getElementById('batchCount').value)||1));
-  document.getElementById('genBtnLabel').textContent=n>1?`🔗 Generate Levels ${id}–${id+n-1}`:`🔗 Generate Level ${id}`;
+  document.getElementById('genBtnLabel').textContent='🔗 '+(n>1?tf('Generate Levels {a}–{b}',{a:id,b:id+n-1}):tf('Generate Level {n}',{n:id}));
 }
 
 /* ══════════════════ Cooldown (localStorage) ══════════════════ */
@@ -1394,7 +1451,7 @@ function resetCooldowns(){
 }
 function updateCdStatus(){
   const n=getCooldownNames().length,w=getCooldownWords().length;
-  document.getElementById('cdStatus').textContent=(n||w)?`${n} theme name${n===1?'':'s'} · ${w} word${w===1?'':'s'} on cooldown`:'Nothing on cooldown';
+  document.getElementById('cdStatus').textContent=(n||w)?tf('{n} theme names · {w} words on cooldown',{n,w}):t('Nothing on cooldown');
 }
 updateCdStatus();
 
@@ -1586,11 +1643,11 @@ function applyWordEdit(nsIdx,val){
   const clean=cleanWord(val);
   const orig=r.level.ns[nsIdx].sol;
   if(!clean||clean===orig){renderLevel(batchIdx);return;}
-  if(clean.length>20){showErr('Word too long — 20 characters max.');renderLevel(batchIdx);return;}
+  if(clean.length>20){showErr(t('Word too long — 20 characters max.'));renderLevel(batchIdx);return;}
   const key=stemKey(clean);
   let clash=null;
   r.level.ns.forEach((n,i)=>{if(i!==nsIdx&&stemKey(n.sol)===key)clash=n.sol;});
-  if(clash){showErr(`“${clean}” clashes with “${clash}” already in this level.`);renderLevel(batchIdx);return;}
+  if(clash){showErr(tf('“{a}” clashes with “{b}” already in this level.',{a:clean,b:clash}));renderLevel(batchIdx);return;}
   document.getElementById('errBox').className='errbox';
   let node=null;
   (function w(n){if(n._i===nsIdx)node=n;(n.c||[]).forEach(w);})(r.tree);
@@ -1685,8 +1742,8 @@ function analyzeLevel(r){
     for(const p of parts){
       const rk=freqRank(p);
       if(rk===null)break;
-      if(rk===undefined){warns.push(`“${n.sol}” isn't in the top 60K most common words — may be too obscure for the ${r.opts.fam.toUpperCase()} tier`);break;}
-      if(rk>limit){warns.push(`“${n.sol}” has frequency rank ~${rk.toLocaleString()} — well outside the selected top ${tier/1000}K vocabulary`);break;}
+      if(rk===undefined){warns.push(tf('“{w}” isn’t in the top 60K most common words — may be too obscure for the {f} tier',{w:n.sol,f:r.opts.fam.toUpperCase()}));break;}
+      if(rk>limit){warns.push(tf('“{w}” has frequency rank ~{r} — well outside the selected top {t}K vocabulary',{w:n.sol,r:rk.toLocaleString(),t:tier/1000}));break;}
     }
   });
   // Repeat scan: flag words already used in a shipped level (in-batch and
@@ -1696,7 +1753,7 @@ function analyzeLevel(r){
     ns.forEach((n,i)=>{
       if(i===0)return;
       const id=map.get(stemKey(n.sol));
-      if(id!=null)warns.push(`“${n.sol}” already appears in shipped level ${id}`);
+      if(id!=null)warns.push(tf('“{w}” already appears in shipped level {id}',{w:n.sol,id}));
     });
   }
   const internals=[];
@@ -1712,7 +1769,7 @@ function analyzeLevel(r){
       if(ns[q].ps&&ns[q].ps[0]===p)return;
       const s=assocStrength(n.sol,ns[q].sol);
       if(s>=0.15&&s>own)
-        warns.push(`“${n.sol}” associates with “${ns[q].sol}” (${s.toFixed(2)}) more strongly than with its own branch “${ns[p].sol}” (${own.toFixed(2)}) — players may misplace it`);
+        warns.push(tf('“{w}” associates with “{q}” ({s}) more strongly than with its own branch “{p}” ({o}) — players may misplace it',{w:n.sol,q:ns[q].sol,s:s.toFixed(2),p:ns[p].sol,o:own.toFixed(2)}));
     });
   });
   return warns;
@@ -1883,7 +1940,7 @@ function collectTreeWords(tree,words,names){
 
 async function generate(){
   const key=document.getElementById('apiKey').value.trim();
-  if(!key){showErr('Please enter your API key.');return;}
+  if(!key){showErr(t('Please enter your API key.'));return;}
   const model=document.getElementById('modelSel').value;
   const count=Math.min(50,Math.max(1,parseInt(document.getElementById('batchCount').value)||1));
   const startId=parseInt(document.getElementById('levelId').value)||1;
@@ -1895,14 +1952,14 @@ async function generate(){
   const sb=document.getElementById('streamBox');sb.textContent='';sb.className='stream on';
 
   batchResults=[];batchIdx=0;
-  progressBar.show('Connecting word graphs',count);
+  progressBar.show(t('Connecting word graphs'),count);
   const batchWords=new Set(), batchNames=[];
 
   try{
     for(let i=0;i<count;i++){
       const opts=readOpts(startId+i);
-      progressBar.update(i,count,`Level ${opts.id} — asking the AI…`);
-      sb.textContent=`Generating level ${opts.id}${count>1?` (${i+1}/${count})`:''}…\n`;
+      progressBar.update(i,count,tf('Level {id} — asking the AI…',{id:opts.id}));
+      sb.textContent=tf('Generating level {id}…',{id:opts.id})+(count>1?` (${i+1}/${count})`:'')+'\n';
       const data=await streamTree(key,model,buildPrompt(opts,batchWords,batchNames),opts);
       const level=buildLevel(data.tree,opts);
       batchResults.push({levelTheme:data.levelTheme,tree:data.tree,level,opts});
@@ -1930,13 +1987,13 @@ async function generate(){
 async function regenerateCurrent(){
   if(!batchResults.length)return;
   const key=document.getElementById('apiKey').value.trim();
-  if(!key){showErr('Please enter your API key.');return;}
+  if(!key){showErr(t('Please enter your API key.'));return;}
   const model=document.getElementById('modelSel').value;
   const idx=batchIdx, old=batchResults[idx];
   const btn=document.getElementById('regenBtn');
-  btn.disabled=true;btn.textContent='↺ Regenerating…';
+  btn.disabled=true;btn.textContent=t('↺ Regenerating…');
   document.getElementById('errBox').className='errbox';
-  const sb=document.getElementById('streamBox');sb.textContent=`Regenerating level ${old.opts.id}…\n`;sb.className='stream on';
+  const sb=document.getElementById('streamBox');sb.textContent=tf('Regenerating level {id}…',{id:old.opts.id})+'\n';sb.className='stream on';
   // Exclude words/names from all OTHER levels in the batch
   const words=new Set(),names=[];
   batchResults.forEach((r,i)=>{if(i!==idx)collectTreeWords(r.tree,words,names);});
@@ -1953,7 +2010,7 @@ async function regenerateCurrent(){
     sb.className='stream';
     showErr(err.message);
   }finally{
-    btn.disabled=false;btn.textContent='↺ Regenerate';
+    btn.disabled=false;btn.textContent=t('↺ Regenerate');
   }
 }
 
@@ -1977,16 +2034,16 @@ function renderLevel(idx){
   const warns=analyzeLevel(r);
   document.getElementById('outTitle').textContent=r.levelTheme;
   document.getElementById('outMeta').textContent=
-    `Level ${lvl.id} · ${lvl.ns.length} nodes · depth ${maxDepth} · ${lvl.to.length} tray words · ${lvl.ml} moves · ${given} pre-filled${lvl.h?' · ✦ hard':''}${warns.length?` · ⚠ ${warns.length} flag${warns.length>1?'s':''}`:''}`;
+    `${t('Level')} ${lvl.id} · ${lvl.ns.length} ${t('nodes')} · ${t('depth')} ${maxDepth} · ${lvl.to.length} ${t('tray words')} · ${lvl.ml} ${t('moves')} · ${given} ${t('pre-filled')}${lvl.h?' · '+t('✦ hard'):''}${warns.length?' · '+tf('⚠ {n} flags',{n:warns.length}):''}`;
   const wb=document.getElementById('warnBox');
   wb.style.display='block';
   if(warns.length){
     wb.className='warnbox flagged';
-    wb.innerHTML='<div class="wb-title">⚠ Norms check — worth a look before shipping</div>'+
+    wb.innerHTML='<div class="wb-title">'+t('⚠ Norms check — worth a look before shipping')+'</div>'+
       warns.map(w=>`<span class="wb-row">• ${w}</span>`).join('');
   }else{
     wb.className='warnbox clean';
-    wb.innerHTML='<div class="wb-title">✓ Norms check</div><span class="wb-row">No familiarity or ambiguity flags from the frequency + association datasets.</span>';
+    wb.innerHTML='<div class="wb-title">'+t('✓ Norms check')+'</div><span class="wb-row">'+t('No familiarity or ambiguity flags from the frequency + association datasets.')+'</span>';
   }
   drawPreview(r);
   renderOutline(r);
@@ -1997,12 +2054,12 @@ function renderLevel(idx){
 }
 
 function renderOutline(r){
-  let html='<div class="o-hint">✎ Click any word to edit it in place</div>';
+  let html='<div class="o-hint">'+t('✎ Click any word to edit it in place')+'</div>';
   (function walk(n,depth){
     const pad='&nbsp;'.repeat(depth*4);
     const given=r.level.ns[n._i]&&r.level.ns[n._i].g;
     const cls=depth===0?'o-root':(given?'o-given':'o-word');
-    const badge=depth===0?'<span class="o-badge">ROOT</span>':(given?'<span class="o-badge">GIVEN</span>':'');
+    const badge=depth===0?'<span class="o-badge">'+t('ROOT')+'</span>':(given?'<span class="o-badge">'+t('GIVEN')+'</span>':'');
     html+=`<div>${pad}${depth>0?'└ ':''}<span class="${cls} o-editable" data-i="${n._i}" title="Click to edit">${n.w}</span>${badge}</div>`;
     (n.c||[]).forEach(c=>walk(c,depth+1));
   })(r.tree,0);
@@ -2191,14 +2248,14 @@ function renderLibrary(){
     return;
   }
   libRendered=true;
-  document.getElementById('libCount').textContent=EXISTING_LEVELS.length+' levels';
+  document.getElementById('libCount').textContent=tf('{n} levels',{n:EXISTING_LEVELS.length});
   grid.innerHTML=EXISTING_LEVELS.map((l,i)=>{
     const given=l.ns.filter(n=>n.g).length;
     return `<div class="lib-card${l.h?' hard':''}">
       <div class="lib-id">Lv ${l.id}${l.h?'<span class="lib-star">✦</span>':''}<span class="lib-pos">#${i+1}</span></div>
-      <div class="lib-meta">${l.ns.length} nodes · ${l.to.length} tray<br>${l.ml} moves · ${given} given</div>
+      <div class="lib-meta">${l.ns.length} ${t('nodes')} · ${l.to.length} ${t('tray')}<br>${l.ml} ${t('moves')} · ${given} ${t('given')}</div>
       <div class="lib-acts">
-        <button class="act-btn" onclick="playExisting(${i})">▶ Play</button>
+        <button class="act-btn" onclick="playExisting(${i})">${t('▶ Play')}</button>
         <button class="act-btn" onclick="downloadExisting(${i})">⬇ HTML</button>
       </div>
     </div>`;
@@ -2218,9 +2275,9 @@ function copyText(text,btn){
   navigator.clipboard.writeText(text).then(()=>{
     if(!btn)return;
     const orig=btn.textContent;
-    btn.classList.add('btn-copied');btn.textContent='✓ Copied!';
+    btn.classList.add('btn-copied');btn.textContent=t('✓ Copied!');
     setTimeout(()=>{btn.classList.remove('btn-copied');btn.textContent=orig;},1400);
-  }).catch(()=>showErr('Clipboard copy failed — select the text manually.'));
+  }).catch(()=>showErr(t('Clipboard copy failed — select the text manually.')));
 }
 function copyLevelJSON(btn){
   const r=batchResults[batchIdx];
@@ -2368,6 +2425,7 @@ window.WT={
   results(){return batchResults;}
 };
 
+applyLang();
 updateGenBtnLabel();
 </script>
 </body>
